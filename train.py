@@ -10,6 +10,7 @@ from torch.autograd import Variable
 from warpctc_pytorch import CTCLoss
 
 from data.data_loader import AudioDataLoader, SpectrogramDataset, BucketingSampler
+from data.utils import network_to_half, set_grad
 from decoder import GreedyDecoder
 from model import DeepSpeech, supported_rnns
 
@@ -30,7 +31,8 @@ parser.add_argument('--hidden-layers', default=5, type=int, help='Number of RNN 
 parser.add_argument('--rnn-type', default='gru', help='Type of the RNN. rnn|gru|lstm are supported')
 parser.add_argument('--epochs', default=70, type=int, help='Number of training epochs')
 parser.add_argument('--cuda', dest='cuda', action='store_true', help='Use cuda to train model')
-parser.add_argument('--half_precision', dest='half_precision', action='store_true', help='If CUDA enabled, use FP16')
+parser.add_argument('--half-precision', dest='half_precision', action='store_true', help='If CUDA enabled, use FP16')
+parser.add_argument('--scale-factor', default=1, help='Scale gradients to prevent NaN/Infs when using FP16')
 parser.add_argument('--lr', '--learning-rate', default=3e-4, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument('--max-norm', default=400, type=int, help='Norm cutoff to prevent explosion of gradients')
@@ -132,17 +134,15 @@ if __name__ == '__main__':
     criterion = CTCLoss()
 
     avg_loss, start_epoch, start_iter = 0, 0, 0
+    prev_state_dict = None
     if args.continue_from:  # Starting from previous model
         print("Loading checkpoint model %s" % args.continue_from)
         package = torch.load(args.continue_from, map_location=lambda storage, loc: storage)
         model = DeepSpeech.load_model_package(package)
         labels = DeepSpeech.get_labels(model)
         audio_conf = DeepSpeech.get_audio_conf(model)
-        parameters = model.parameters()
-        optimizer = torch.optim.SGD(parameters, lr=args.lr,
-                                    momentum=args.momentum, nesterov=True)
-        if not args.finetune:  # Don't want to restart training
-            optimizer.load_state_dict(package['optim_dict'])
+        if not args.finetune:  # Restart training
+            prev_state_dict = package['optim_dict']
             start_epoch = int(package.get('epoch', 1)) - 1  # Index start at 0 for training
             start_iter = package.get('iteration', None)
             if start_iter is None:
@@ -194,10 +194,8 @@ if __name__ == '__main__':
                            labels=labels,
                            rnn_type=supported_rnns[rnn_type],
                            audio_conf=audio_conf,
-                           bidirectional=args.bidirectional)
-        parameters = model.parameters()
-        optimizer = torch.optim.SGD(parameters, lr=args.lr,
-                                    momentum=args.momentum, nesterov=True)
+                           bidirectional=args.bidirectional,
+                           half=args.half_precision)
 
     decoder = GreedyDecoder(labels)
     train_dataset = SpectrogramDataset(audio_conf=audio_conf, manifest_filepath=args.train_manifest, labels=labels,
@@ -214,10 +212,19 @@ if __name__ == '__main__':
         print("Shuffling batches for the following epochs")
         train_sampler.shuffle()
 
+    params = model.parameters()
     if args.cuda:
         model = torch.nn.DataParallel(model).cuda()
         if args.half_precision:
-            model = model.half()
+            model = network_to_half(model)
+            param_copy = [param.clone().type(torch.cuda.FloatTensor).detach() for param in model.parameters()]
+            for param in param_copy:
+                param.requires_grad = True
+            params = param_copy
+    optimizer = torch.optim.SGD(params, lr=args.lr,
+                                momentum=args.momentum, nesterov=True)
+    if prev_state_dict:
+        optimizer.load_state_dict(prev_state_dict)
 
     print(model)
     print("Number of parameters: %d" % DeepSpeech.get_param_size(model))
@@ -242,8 +249,6 @@ if __name__ == '__main__':
 
             if args.cuda:
                 inputs = inputs.cuda()
-                if args.half_precision:
-                    inputs = inputs.half()
 
             out = model(inputs)
             out = out.transpose(0, 1)  # TxNxH
@@ -266,17 +271,23 @@ if __name__ == '__main__':
 
             avg_loss += loss_value
             losses.update(loss_value, inputs.size(0))
-            if args.cuda and args.half_precision:
-                loss = loss.cuda().half()
 
             # compute gradient
-            optimizer.zero_grad()
-            loss.backward()
-
-            torch.nn.utils.clip_grad_norm(parameters, args.max_norm)
-
+            model.zero_grad()
             # SGD step
-            optimizer.step()
+            if args.cuda and args.half_precision:
+                loss = loss * args.scale_factor
+                loss.backward()
+                torch.nn.utils.clip_grad_norm(model.parameters(), args.max_norm)
+                set_grad(param_copy, list(model.parameters()), args.scale_factor)
+                optimizer.step()
+                params = list(model.parameters())
+                for x in range(len(params)):
+                    params[x].data.copy_(param_copy[x].data)
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm(model.parameters(), args.max_norm)
+                optimizer.step()
 
             if args.cuda:
                 torch.cuda.synchronize()

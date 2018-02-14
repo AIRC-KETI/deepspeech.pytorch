@@ -1,6 +1,8 @@
 import argparse
 import warnings
 
+import torch
+
 warnings.simplefilter('ignore')
 
 from decoder import GreedyDecoder
@@ -67,6 +69,7 @@ def decode_results(model, decoded_output, decoded_offsets):
 
 if __name__ == '__main__':
     model = DeepSpeech.load_model(args.model_path, cuda=args.cuda)
+    is_half = DeepSpeech.is_half(model)
     model.eval()
 
     labels = DeepSpeech.get_labels(model)
@@ -85,6 +88,10 @@ if __name__ == '__main__':
 
     spect = parser.parse_audio(args.audio_path).contiguous()
     spect = spect.view(1, 1, spect.size(0), spect.size(1))
+    if args.cuda:
+        spect = spect.cuda()
+    if is_half:
+        spect = spect.half()
     out = model(Variable(spect, volatile=True))
     out = out.transpose(0, 1)  # TxNxH
     decoded_output, decoded_offsets = decoder.decode(out.data)

@@ -7,6 +7,8 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from torch.autograd import Variable
 
+from data.utils import network_to_half
+
 supported_rnns = {
     'lstm': nn.LSTM,
     'rnn': nn.RNN,
@@ -112,7 +114,7 @@ class Lookahead(nn.Module):
 
 class DeepSpeech(nn.Module):
     def __init__(self, rnn_type=nn.LSTM, labels="abc", rnn_hidden_size=768, nb_layers=5, audio_conf=None,
-                 bidirectional=True, context=20):
+                 bidirectional=True, context=20, half=False):
         super(DeepSpeech, self).__init__()
 
         # model metadata needed for serialization/deserialization
@@ -125,6 +127,7 @@ class DeepSpeech(nn.Module):
         self._audio_conf = audio_conf or {}
         self._labels = labels
         self._bidirectional = bidirectional
+        self._half = half
 
         sample_rate = self._audio_conf.get("sample_rate", 16000)
         window_size = self._audio_conf.get("window_size", 0.02)
@@ -169,6 +172,8 @@ class DeepSpeech(nn.Module):
         self.inference_softmax = InferenceBatchSoftmax()
 
     def forward(self, x):
+        if self._half:
+            x = x.half()
         x = self.conv(x)
 
         sizes = x.size()
@@ -191,7 +196,8 @@ class DeepSpeech(nn.Module):
         package = torch.load(path, map_location=lambda storage, loc: storage)
         model = cls(rnn_hidden_size=package['hidden_size'], nb_layers=package['hidden_layers'],
                     labels=package['labels'], audio_conf=package['audio_conf'],
-                    rnn_type=supported_rnns[package['rnn_type']], bidirectional=package.get('bidirectional', True))
+                    rnn_type=supported_rnns[package['rnn_type']], bidirectional=package.get('bidirectional', True),
+                    half=package.get('half', False))
         # the blacklist parameters are params that were previous erroneously saved by the model
         # care should be taken in future versions that if batch_norm on the first rnn is required
         # that it be named something else
@@ -203,6 +209,8 @@ class DeepSpeech(nn.Module):
         model.load_state_dict(package['state_dict'])
         for x in model.rnns:
             x.flatten_parameters()
+        if package.get('half', False):
+            model = network_to_half(model)
         if cuda:
             model = torch.nn.DataParallel(model).cuda()
         return model
@@ -213,6 +221,8 @@ class DeepSpeech(nn.Module):
                     labels=package['labels'], audio_conf=package['audio_conf'],
                     rnn_type=supported_rnns[package['rnn_type']], bidirectional=package.get('bidirectional', True))
         model.load_state_dict(package['state_dict'])
+        if package.get('half', False):
+            model = network_to_half(model)
         if cuda:
             model = torch.nn.DataParallel(model).cuda()
         return model
@@ -230,7 +240,8 @@ class DeepSpeech(nn.Module):
             'audio_conf': model._audio_conf,
             'labels': model._labels,
             'state_dict': model.state_dict(),
-            'bidirectional': model._bidirectional
+            'bidirectional': model._bidirectional,
+            'half': model._half
         }
         if optimizer is not None:
             package['optim_dict'] = optimizer.state_dict()
@@ -267,6 +278,11 @@ class DeepSpeech(nn.Module):
     def get_audio_conf(model):
         model_is_cuda = next(model.parameters()).is_cuda
         return model.module._audio_conf if model_is_cuda else model._audio_conf
+
+    @staticmethod
+    def is_half(model):
+        model_is_cuda = next(model.parameters()).is_cuda
+        return model.module._half if model_is_cuda else model._half
 
     @staticmethod
     def get_meta(model):

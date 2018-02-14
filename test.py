@@ -1,6 +1,7 @@
 import argparse
 
 import numpy as np
+import torch
 from torch.autograd import Variable
 from tqdm import tqdm
 
@@ -39,11 +40,11 @@ args = parser.parse_args()
 
 if __name__ == '__main__':
     model = DeepSpeech.load_model(args.model_path, cuda=args.cuda)
+    is_half = DeepSpeech.is_half(model)
     model.eval()
 
     labels = DeepSpeech.get_labels(model)
     audio_conf = DeepSpeech.get_audio_conf(model)
-
     if args.decoder == "beam":
         from decoder import BeamCTCDecoder
 
@@ -75,6 +76,8 @@ if __name__ == '__main__':
 
         if args.cuda:
             inputs = inputs.cuda()
+        if is_half:
+            inputs = inputs.half()
 
         out = model(inputs)  # NxTxH
         seq_length = out.size(1)
