@@ -41,7 +41,8 @@ model = DeepSpeech(rnn_hidden_size=args.hidden_size,
                    nb_layers=args.hidden_layers,
                    audio_conf=audio_conf,
                    labels=labels,
-                   rnn_type=supported_rnns[rnn_type])
+                   rnn_type=supported_rnns[rnn_type],
+                   half=True)
 print("Number of parameters: %d" % DeepSpeech.get_param_size(model))
 
 param_copy = [param.clone().type(torch.cuda.FloatTensor).detach() for param in model.parameters()]
