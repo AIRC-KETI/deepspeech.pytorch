@@ -163,6 +163,15 @@ if __name__ == '__main__':
                                     momentum=args.momentum, nesterov=True)
         if not args.finetune:  # Don't want to restart training
             optimizer.load_state_dict(package['optim_dict'])
+
+            # Temporary fix for pytorch #2830 & #1442 while pull request #3658 in not incorporated in a release
+            # TODO : remove when a new release of pytorch include pull request #3658
+            if args.cuda:
+                for state in optimizer.state.values():
+                    for k, v in state.items():
+                        if torch.is_tensor(v):
+                            state[k] = v.cuda()
+
             start_epoch = int(package.get('epoch', 1)) - 1  # Index start at 0 for training
             start_iter = package.get('iteration', None)
             if start_iter is None:
@@ -242,7 +251,7 @@ if __name__ == '__main__':
         model = torch.nn.DataParallel(model).cuda()
     elif args.cuda and args.distributed:
         model.cuda()
-        model = DistributedDataParallel(model)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=(args.gpu_rank,) if args.rank else None)
 
     print(model)
     print("Number of parameters: %d" % DeepSpeech.get_param_size(model))
