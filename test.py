@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from decoder import GreedyDecoder
 
-from data.data_loader import SpectrogramDataset, AudioDataLoader
+from data.data_loader import SpectrogramDatasetTest, AudioDataLoader
 from model import DeepSpeech
 
 parser = argparse.ArgumentParser(description='DeepSpeech transcription')
@@ -15,7 +15,7 @@ parser.add_argument('--model-path', default='models/deepspeech_final.pth',
 parser.add_argument('--cuda', action="store_true", help='Use cuda to test model')
 parser.add_argument('--test-manifest', metavar='DIR',
                     help='path to validation manifest csv', default='data/test_manifest.csv')
-parser.add_argument('--batch-size', default=20, type=int, help='Batch size for training')
+parser.add_argument('--batch-size', default=2, type=int, help='Batch size for training')
 parser.add_argument('--num-workers', default=4, type=int, help='Number of workers used in dataloading')
 parser.add_argument('--decoder', default="greedy", choices=["greedy", "beam", "none"], type=str, help="Decoder to use")
 parser.add_argument('--verbose', action="store_true", help="print out decoded output and error of each sample")
@@ -42,6 +42,8 @@ if __name__ == '__main__':
     model.eval()
 
     labels = DeepSpeech.get_labels(model)
+    #labels += ['_']
+    print(labels)
     audio_conf = DeepSpeech.get_audio_conf(model)
 
     if args.decoder == "beam":
@@ -55,14 +57,16 @@ if __name__ == '__main__':
     else:
         decoder = None
     target_decoder = GreedyDecoder(labels, blank_index=labels.index('_'))
-    test_dataset = SpectrogramDataset(audio_conf=audio_conf, manifest_filepath=args.test_manifest, labels=labels,
+    test_dataset = SpectrogramDatasetTest(audio_conf=audio_conf, manifest_filepath=args.test_manifest, labels=labels,
                                       normalize=True)
     test_loader = AudioDataLoader(test_dataset, batch_size=args.batch_size,
                                   num_workers=args.num_workers)
+    a = test_dataset[0]
     total_cer, total_wer, num_tokens, num_chars = 0, 0, 0, 0
     output_data = []
+    f = open("result.txt", 'w')
     for i, (data) in tqdm(enumerate(test_loader), total=len(test_loader)):
-        inputs, targets, input_percentages, target_sizes = data
+        inputs, targets, input_percentages, target_sizes, paths = data
 
         inputs = Variable(inputs, volatile=True)
 
@@ -86,6 +90,12 @@ if __name__ == '__main__':
             continue
 
         decoded_output, _, = decoder.decode(out.data, sizes)
+        for path, output in zip(paths, decoded_output):
+            write_str = "{path}: {output}\n".format(path=path, output=output[:-1])
+            f.write(write_str)
+
+
+        print(decoded_output)
         target_strings = target_decoder.convert_to_strings(split_targets)
         for x in range(len(target_strings)):
             transcript, reference = decoded_output[x][0], target_strings[x][0]
@@ -109,3 +119,5 @@ if __name__ == '__main__':
               'Average CER {cer:.3f}\t'.format(wer=wer * 100, cer=cer * 100))
     else:
         np.save(args.output_path, output_data)
+
+    f.close()

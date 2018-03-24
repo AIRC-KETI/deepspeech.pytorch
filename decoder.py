@@ -35,11 +35,13 @@ class Decoder(object):
         # e.g. labels = "_'ABCDEFGHIJKLMNOPQRSTUVWXYZ#"
         self.labels = labels
         self.int_to_char = dict([(i, c) for (i, c) in enumerate(labels)])
-        self.blank_index = blank_index
         space_index = len(labels)  # To prevent errors in decode, we add an out of bounds index for the space
-        if ' ' in labels:
-            space_index = labels.index(' ')
+        if 'pau' in labels:
+            space_index = labels.index('pau')
         self.space_index = space_index
+        if '_' in labels:
+            blank_index = labels.index('_')
+        self.blank_index = blank_index
 
     def wer(self, s1, s2):
         """
@@ -172,10 +174,10 @@ class GreedyDecoder(Decoder):
                 if remove_repetitions and i != 0 and char == self.int_to_char[sequence[i - 1]]:
                     pass
                 elif char == self.labels[self.space_index]:
-                    string += ' '
+                    string += ' ,'
                     offsets.append(i)
                 else:
-                    string = string + char
+                    string += char + ","
                     offsets.append(i)
         return string, torch.IntTensor(offsets)
 

@@ -17,20 +17,20 @@ from model import DeepSpeech, supported_rnns
 
 parser = argparse.ArgumentParser(description='DeepSpeech training')
 parser.add_argument('--train-manifest', metavar='DIR',
-                    help='path to train manifest csv', default='../data/sitec/train_manifest.csv')
+                    help='path to train manifest csv', default='../data/sitec/total_mono_manifest.csv')
 parser.add_argument('--val-manifest', metavar='DIR',
-                    help='path to validation manifest csv', default='../data/sitec/val_manifest.csv')
+                    help='path to validation manifest csv', default='../data/sitec/total_mono_manifest.csv')
 parser.add_argument('--sample-rate', default=16000, type=int, help='Sample rate')
-parser.add_argument('--batch-size', default=30, type=int, help='Batch size for training')
-parser.add_argument('--num-workers', default=4, type=int, help='Number of workers used in data-loading')
-parser.add_argument('--labels-path', default='../data/sitec/labels_diphone.json', help='Contains all characters for transcription')
+parser.add_argument('--batch-size', default=16, type=int, help='Batch size for training')
+parser.add_argument('--num-workers', default=32, type=int, help='Number of workers used in data-loading')
+parser.add_argument('--labels-path', default='../data/sitec/labels_monophone.json', help='Contains all characters for transcription')
 parser.add_argument('--window-size', default=.02, type=float, help='Window size for spectrogram in seconds')
 parser.add_argument('--window-stride', default=.01, type=float, help='Window stride for spectrogram in seconds')
 parser.add_argument('--window', default='hamming', help='Window type for spectrogram generation')
 parser.add_argument('--hidden-size', default=800, type=int, help='Hidden size of RNNs')
 parser.add_argument('--hidden-layers', default=5, type=int, help='Number of RNN layers')
 parser.add_argument('--rnn-type', default='gru', help='Type of the RNN. rnn|gru|lstm are supported')
-parser.add_argument('--epochs', default=70, type=int, help='Number of training epochs')
+parser.add_argument('--epochs', default=40, type=int, help='Number of training epochs')
 parser.add_argument('--cuda', dest='cuda', action='store_true', default=True, help='Use cuda to train model')
 parser.add_argument('--lr', '--learning-rate', default=3e-4, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
@@ -40,12 +40,12 @@ parser.add_argument('--silent', dest='silent', action='store_true', help='Turn o
 parser.add_argument('--checkpoint', dest='checkpoint', action='store_true', help='Enables checkpoint saving of model')
 parser.add_argument('--checkpoint-per-batch', default=0, type=int, help='Save checkpoint per batch. 0 means never save')
 parser.add_argument('--visdom', dest='visdom', action='store_true', help='Turn on visdom graphing')
-parser.add_argument('--tensorboard', dest='tensorboard', action='store_true', help='Turn on tensorboard graphing')
-parser.add_argument('--log-dir', default='diphone/deepspeech_final', help='Location of tensorboard log')
+parser.add_argument('--tensorboard', dest='tensorboard', action='store_true', default=True, help='Turn on tensorboard graphing')
+parser.add_argument('--log-dir', default='diphone/deepspeech_20180324_total', help='Location of tensorboard log')
 parser.add_argument('--log-params', dest='log_params', action='store_true', help='Log parameter values and gradients')
 parser.add_argument('--id', default='Deepspeech training', help='Identifier for visdom/tensorboard run')
 parser.add_argument('--save-folder', default='models/', help='Location to save epoch models')
-parser.add_argument('--model-path', default='models/deepspeech_final.pth',
+parser.add_argument('--model-path', default='models/deepspeech_20180324_total.pth',
                     help='Location to save best validation model')
 parser.add_argument('--continue-from', default='', help='Continue from checkpoint model')
 parser.add_argument('--finetune', dest='finetune', action='store_true',
@@ -206,7 +206,8 @@ if __name__ == '__main__':
                     tensorboard_writer.add_scalars(args.id, values, i + 1)
     else:
         with open(args.labels_path) as label_file:
-            labels = str(''.join(json.load(label_file)))
+            labels = json.load(label_file)
+            print("n_label: {}".format(len(labels)))
 
         audio_conf = dict(sample_rate=args.sample_rate,
                           window_size=args.window_size,
@@ -327,6 +328,7 @@ if __name__ == '__main__':
                            file_path)
             del loss
             del out
+            torch.cuda.empty_cache()
         avg_loss /= len(train_sampler)
 
         epoch_time = time.time() - start_epoch_time
